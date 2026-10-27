@@ -1,9 +1,3 @@
-"""
-步骤 4：详情页 HTML 批量下载脚本 (4_download_pages.py)
-核心目标：读取官网 URL 清单，批量将详情页下载到本地建立快照，具备断点续传能力。
-产出物：data/{school}/htmls/*.html
-"""
-
 import os
 import sys
 import re
