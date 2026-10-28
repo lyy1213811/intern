@@ -80,6 +80,10 @@ def diff_program_names(school="hku"):
     for db_idx, db_row in df_db.iterrows():
         if str(db_row.get('is_valid', '')).lower() != 'true':
             continue
+        db_name_cn = str(db_row.get('program_name_cn', '') or '')
+        db_url = str(db_row.get('program_website', '') or '')
+        if ('cuhk-shenzhen' in db_name_cn.lower() or '深圳' in db_name_cn) or ('cuhk.edu.cn' in db_url.lower()):
+            continue
         db_norm = db_row['norm_name']
         for off_idx, off_row in df_off.iterrows():
             if off_idx in off_matched_indices:
@@ -106,6 +110,10 @@ def diff_program_names(school="hku"):
         if db_idx in db_matched_indices:
             continue
         if str(db_row.get('is_valid', '')).lower() != 'true':
+            continue
+        db_name_cn = str(db_row.get('program_name_cn', '') or '')
+        db_url_raw = str(db_row.get('program_website', '') or '')
+        if ('cuhk-shenzhen' in db_name_cn.lower() or '深圳' in db_name_cn) or ('cuhk.edu.cn' in db_url_raw.lower()):
             continue
         db_url = str(db_row.get('program_website', '')).strip().lower()
         db_slug = normalize_name(get_url_slug(db_url).replace('-', ' '))
@@ -140,6 +148,10 @@ def diff_program_names(school="hku"):
         if db_idx in db_matched_indices:
             continue
         if str(db_row.get('is_valid', '')).lower() != 'true':
+            continue
+        db_name_cn = str(db_row.get('program_name_cn', '') or '')
+        db_url = str(db_row.get('program_website', '') or '')
+        if ('cuhk-shenzhen' in db_name_cn.lower() or '深圳' in db_name_cn) or ('cuhk.edu.cn' in db_url.lower()):
             continue
         db_norm = db_row['norm_name']
         best_ratio = 0.0
@@ -199,10 +211,10 @@ def diff_program_names(school="hku"):
             db_url = str(db_row.get('program_website', '') or '')
             is_valid_str = str(db_row.get('is_valid', '')).lower()
 
-            if ('cuhk-shenzhen' in db_name_cn.lower() or '深圳' in db_name_cn) or ('cuhk.edu.cn' in db_url.lower()):
-                cat = "数据库独有(深圳校区/独立招生)"
-            elif is_valid_str == 'false':
+            if is_valid_str == 'false':
                 cat = "数据库独有(已失效/历史归档)"
+            elif ('cuhk-shenzhen' in db_name_cn.lower() or '深圳' in db_name_cn) or ('cuhk.edu.cn' in db_url.lower()):
+                cat = "数据库独有(深圳校区/独立招生)"
             else:
                 cat = "数据库独有(疑似停办/下线)"
 
