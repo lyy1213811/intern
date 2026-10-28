@@ -18,7 +18,8 @@ def normalize_name(name):
     return s
 
 def diff_program_names(school="hku"):
-    data_dir = os.path.join("data", school.lower())
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    data_dir = os.path.join(base_dir, "data", school.lower())
     db_file = os.path.join(data_dir, "db_slice.csv")
     official_file = os.path.join(data_dir, "official_list.csv")
     out_file = os.path.join(data_dir, "diff_programs.csv")
@@ -30,6 +31,11 @@ def diff_program_names(school="hku"):
 
     df_db = pd.read_csv(db_file)
     df_off = pd.read_csv(official_file)
+
+    # 核心优先级：有效在招专业 (is_valid == True) 必须优先匹配官网名额！
+    # 杜绝 1098、1135 等失效小方向提前抢占 44051、44050 等在招大类的官网名额
+    df_db['sort_valid'] = df_db['is_valid'].apply(lambda x: 0 if str(x).lower() == 'true' else 1)
+    df_db = df_db.sort_values(by=['sort_valid', 'id']).reset_index(drop=True)
 
     print(f"[*] 读取数据库记录: {len(df_db)} 条")
     print(f"[*] 读取官网记录: {len(df_off)} 条")
