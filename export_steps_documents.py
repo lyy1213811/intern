@@ -25,7 +25,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data", "hku")
 OUTPUT_DIRS = [
     os.path.join(DATA_DIR, "export_documents"),
-    r"c:\Users\rtx\Desktop\HKU_流水线步骤一至四产出文档"
+    r"c:\Users\rtx\Desktop\步骤一至四"
 ]
 
 for d in OUTPUT_DIRS:
@@ -260,6 +260,12 @@ def main():
 
     print("[*] 正在生成各步骤独立 Excel 文档...")
     wb1 = generate_step1_excel(df_db)
+    
+    # 步骤 1 附表：纯失效专业单独成表
+    df_false = df_db[df_db['is_valid'].astype(str).str.lower() == 'false']
+    wb1_false = generate_step1_excel(df_false)
+    wb1_false.active.title = "HKU_失效专业(is_valid=False)"
+    
     wb2 = generate_step2_excel(df_off)
     wb3 = generate_step3_excel(df_diff)
     wb4 = generate_step4_excel(df_htmls)
@@ -267,6 +273,7 @@ def main():
 
     file_mapping = {
         "步骤1_数据库切片_db_slice.xlsx": wb1,
+        "步骤1附表_数据库失效专业_is_valid_false.xlsx": wb1_false,
         "步骤2_官网在招列表_official_list.xlsx": wb2,
         "步骤3_大盘名单差集比对_diff_programs.xlsx": wb3,
         "步骤4_网页快照下载清单_htmls_index.xlsx": wb4,

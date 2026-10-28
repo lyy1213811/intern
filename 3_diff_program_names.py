@@ -51,19 +51,38 @@ def diff_program_names(school="hku"):
     off_matched_indices = set()
     db_matched_indices = set()
 
-    # 1. 优先通过 URL 或 规范化名称进行精确对齐
+    # 1. 优先轮次一：规范化名称完全相同 (优先保证44047教育学、44048公共卫生等综合大类精准对齐)
     for db_idx, db_row in df_db.iterrows():
-        db_url = str(db_row.get('program_website', '')).strip().lower()
         db_norm = db_row['norm_name']
-        
-        found = False
+        for off_idx, off_row in df_off.iterrows():
+            if off_idx in off_matched_indices:
+                continue
+            if db_norm == off_row['norm_name']:
+                matched.append({
+                    "category": "完全匹配",
+                    "match_score": 1.0,
+                    "db_id": db_row['id'],
+                    "db_name_en": db_row['program_name_en'],
+                    "db_name_cn": db_row['program_name_cn'],
+                    "official_name": off_row['official_program_name'],
+                    "faculty": off_row['faculty'],
+                    "db_url": db_row['program_website'],
+                    "official_url": off_row['official_url'],
+                    "db_is_valid": db_row.get('is_valid', '')
+                })
+                off_matched_indices.add(off_idx)
+                db_matched_indices.add(db_idx)
+                break
+
+    # 2. 优先轮次二：URL完全吻合 (对齐名称有轻微出入但URL确凿一致的专业)
+    for db_idx, db_row in df_db.iterrows():
+        if db_idx in db_matched_indices:
+            continue
+        db_url = str(db_row.get('program_website', '')).strip().lower()
         for off_idx, off_row in df_off.iterrows():
             if off_idx in off_matched_indices:
                 continue
             off_url = str(off_row.get('official_url', '')).strip().lower()
-            off_norm = off_row['norm_name']
-
-            # 条件1：URL完全吻合
             if db_url and off_url and (db_url == off_url or db_url in off_url or off_url in db_url):
                 matched.append({
                     "category": "完全匹配",
@@ -79,29 +98,9 @@ def diff_program_names(school="hku"):
                 })
                 off_matched_indices.add(off_idx)
                 db_matched_indices.add(db_idx)
-                found = True
-                break
-            
-            # 条件2：名称规范化后完全相同
-            if db_norm == off_norm:
-                matched.append({
-                    "category": "完全匹配",
-                    "match_score": 1.0,
-                    "db_id": db_row['id'],
-                    "db_name_en": db_row['program_name_en'],
-                    "db_name_cn": db_row['program_name_cn'],
-                    "official_name": off_row['official_program_name'],
-                    "faculty": off_row['faculty'],
-                    "db_url": db_row['program_website'],
-                    "official_url": off_row['official_url'],
-                    "db_is_valid": db_row.get('is_valid', '')
-                })
-                off_matched_indices.add(off_idx)
-                db_matched_indices.add(db_idx)
-                found = True
                 break
 
-    # 2. 针对未匹配项，执行模糊匹配 (阈值 0.82)
+    # 3. 优先轮次三：针对剩余未匹配项，执行模糊匹配 (阈值 0.82)
     for db_idx, db_row in df_db.iterrows():
         if db_idx in db_matched_indices:
             continue
