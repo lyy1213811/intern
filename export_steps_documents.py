@@ -277,8 +277,16 @@ def main():
         print(f"\n[+] 正在导出至目录: {target_dir}")
         for filename, wb in file_mapping.items():
             out_path = os.path.join(target_dir, filename)
-            wb.save(out_path)
-            print(f"    -> 成功保存: {filename} ({os.path.getsize(out_path) // 1024} KB)")
+            try:
+                wb.save(out_path)
+                print(f"    -> 成功保存: {filename} ({os.path.getsize(out_path) // 1024} KB)")
+            except PermissionError:
+                # 若被 Excel 锁定占用，自动生成一个带最新后缀的文件
+                stem, ext = os.path.splitext(filename)
+                alt_filename = f"{stem}_最新{ext}"
+                alt_path = os.path.join(target_dir, alt_filename)
+                wb.save(alt_path)
+                print(f"    [!] 原文件被占用，已另存为最新文件: {alt_filename} ({os.path.getsize(alt_path) // 1024} KB)")
 
     print("\n[OK] 步骤一至步骤四产出文档导出全部完成！")
 
