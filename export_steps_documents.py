@@ -12,6 +12,7 @@ import os
 import sys
 import re
 import urllib.parse
+import argparse
 import pandas as pd
 import openpyxl
 from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
@@ -20,16 +21,8 @@ from openpyxl.utils import get_column_letter
 if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8')
 
-# 目录定义
+# 基础目录定义
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_DIR = os.path.join(BASE_DIR, "data", "hku")
-OUTPUT_DIRS = [
-    os.path.join(DATA_DIR, "export_documents"),
-    r"c:\Users\rtx\Desktop\步骤一至四"
-]
-
-for d in OUTPUT_DIRS:
-    os.makedirs(d, exist_ok=True)
 
 # 样式定义
 FONT_FAMILY = "微软雅黑"
@@ -54,6 +47,8 @@ DIFF_FILLS = {
     "完全匹配": PatternFill(start_color="E2EFDA", end_color="E2EFDA", fill_type="solid"),
     "模糊匹配(疑似更名)": PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid"),
     "官网独有(疑似新增/漏录)": PatternFill(start_color="FCE4D6", end_color="FCE4D6", fill_type="solid"),
+    "数据库独有(深圳校区/独立招生)": PatternFill(start_color="DDEBF7", end_color="DDEBF7", fill_type="solid"),
+    "数据库独有(已失效/历史归档)": PatternFill(start_color="EDEDED", end_color="EDEDED", fill_type="solid"),
     "数据库独有(疑似停办/下线)": PatternFill(start_color="EDEDED", end_color="EDEDED", fill_type="solid")
 }
 
@@ -195,12 +190,23 @@ def generate_combined_excel(df_db, df_off, df_diff, df_htmls):
 
     return wb
 
-def main():
-    print("[*] 开始读取步骤一至四数据源...")
-    db_file = os.path.join(DATA_DIR, "db_slice.csv")
-    off_file = os.path.join(DATA_DIR, "official_list.csv")
-    diff_file = os.path.join(DATA_DIR, "diff_programs.csv")
-    html_dir = os.path.join(DATA_DIR, "htmls")
+def main(school="cuhk"):
+    school_key = school.lower()
+    school_upper = school.upper()
+    data_dir = os.path.join(BASE_DIR, "data", school_key)
+    desktop_target = r"c:\Users\rtx\Desktop\步骤一至四" if school_key == "hku" else rf"c:\Users\rtx\Desktop\{school_upper}_步骤一至四"
+    output_dirs = [
+        os.path.join(data_dir, "export_documents"),
+        desktop_target
+    ]
+    for d in output_dirs:
+        os.makedirs(d, exist_ok=True)
+
+    print(f"[*] 开始读取 [{school_upper}] 步骤一至四数据源...")
+    db_file = os.path.join(data_dir, "db_slice.csv")
+    off_file = os.path.join(data_dir, "official_list.csv")
+    diff_file = os.path.join(data_dir, "diff_programs.csv")
+    html_dir = os.path.join(data_dir, "htmls")
 
     df_db = pd.read_csv(db_file)
     df_off = pd.read_csv(off_file)
@@ -258,13 +264,13 @@ def main():
     print(f"    - 步骤3 大盘差集比对: {len(df_diff)} 条")
     print(f"    - 步骤4 网页快照清单: {len(df_htmls)} 条")
 
-    print("[*] 正在生成各步骤独立 Excel 文档...")
+    print(f"[*] 正在生成 [{school_upper}] 各步骤独立 Excel 文档...")
     wb1 = generate_step1_excel(df_db)
     
     # 步骤 1 附表：纯失效专业单独成表
     df_false = df_db[df_db['is_valid'].astype(str).str.lower() == 'false']
     wb1_false = generate_step1_excel(df_false)
-    wb1_false.active.title = "HKU_失效专业(is_valid=False)"
+    wb1_false.active.title = f"{school_upper}_失效专业(is_valid=False)"
     
     wb2 = generate_step2_excel(df_off)
     wb3 = generate_step3_excel(df_diff)
@@ -277,10 +283,10 @@ def main():
         "步骤2_官网在招列表_official_list.xlsx": wb2,
         "步骤3_大盘名单差集比对_diff_programs.xlsx": wb3,
         "步骤4_网页快照下载清单_htmls_index.xlsx": wb4,
-        "HKU_流水线_步骤一至四全量中间产出汇总表.xlsx": wb_all
+        f"{school_upper}_流水线_步骤一至四全量中间产出汇总表.xlsx": wb_all
     }
 
-    for target_dir in OUTPUT_DIRS:
+    for target_dir in output_dirs:
         print(f"\n[+] 正在导出至目录: {target_dir}")
         for filename, wb in file_mapping.items():
             out_path = os.path.join(target_dir, filename)
@@ -295,7 +301,10 @@ def main():
                 wb.save(alt_path)
                 print(f"    [!] 原文件被占用，已另存为最新文件: {alt_filename} ({os.path.getsize(alt_path) // 1024} KB)")
 
-    print("\n[OK] 步骤一至步骤四产出文档导出全部完成！")
+    print(f"\n[OK] [{school_upper}] 步骤一至步骤四产出文档导出全部完成！")
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="步骤一至四精美Excel文档批量导出")
+    parser.add_argument("--school", default="cuhk", help="院校代码，如 hku, cuhk")
+    args = parser.parse_args()
+    main(args.school)

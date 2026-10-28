@@ -8,14 +8,39 @@ import pandas as pd
 if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8')
 
+from urllib.parse import urlparse
+
 def normalize_name(name):
     if not isinstance(name, str):
         return ""
-    # 转小写并去除标点符号与多余空格
-    s = name.lower()
+    # 去除星号与特殊标记
+    s = name.replace('*', '').lower()
+    # 统一常见学位缩写
+    s = re.sub(r'\bm\.sc\.?\b', 'msc', s)
+    s = re.sub(r'\bm\.a\.?\b', 'ma', s)
+    s = re.sub(r'\bm\.ed\.?\b', 'med', s)
     s = re.sub(r'[\(\)\[\]\,\.\-\/\:\'\"]', ' ', s)
+    s = re.sub(r'\bm\s+sc\b', 'msc', s)
+    s = re.sub(r'\bm\s+a\b', 'ma', s)
+    s = re.sub(r'\bmaster of science\b', 'msc', s)
+    s = re.sub(r'\bmaster of arts\b', 'ma', s)
     s = re.sub(r'\s+', ' ', s).strip()
     return s
+
+def get_url_slug(url):
+    if not isinstance(url, str):
+        return ''
+    import urllib.parse
+    p = urllib.parse.urlparse(url)
+    q = urllib.parse.parse_qs(p.query)
+    if 'programme' in q and q['programme']:
+        return q['programme'][0].strip()
+    if p.fragment:
+        return p.fragment.strip()
+    base = os.path.basename(p.path.rstrip('/')).strip()
+    if base.lower() not in ['programme-details', 'programme', 'programmes', 'admissions', 'index.html', 'index', '']:
+        return base
+    return ''
 
 def diff_program_names(school="hku"):
     base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -33,7 +58,7 @@ def diff_program_names(school="hku"):
     df_off = pd.read_csv(official_file)
 
     # 核心优先级：有效在招专业 (is_valid == True) 必须优先匹配官网名额！
-    # 杜绝 1098、1135 等失效小方向提前抢占 44051、44050 等在招大类的官网名额
+    # 杜绝失效小方向提前抢占在招大类的官网名额
     df_db['sort_valid'] = df_db['is_valid'].apply(lambda x: 0 if str(x).lower() == 'true' else 1)
     df_db = df_db.sort_values(by=['sort_valid', 'id']).reset_index(drop=True)
 
@@ -51,8 +76,10 @@ def diff_program_names(school="hku"):
     off_matched_indices = set()
     db_matched_indices = set()
 
-    # 1. 优先轮次一：规范化名称完全相同 (优先保证44047教育学、44048公共卫生等综合大类精准对齐)
+    # 1. 优先轮次一：规范化名称完全相同 (仅限 is_valid == True 在招专业参与匹配)
     for db_idx, db_row in df_db.iterrows():
+        if str(db_row.get('is_valid', '')).lower() != 'true':
+            continue
         db_norm = db_row['norm_name']
         for off_idx, off_row in df_off.iterrows():
             if off_idx in off_matched_indices:
@@ -74,16 +101,24 @@ def diff_program_names(school="hku"):
                 db_matched_indices.add(db_idx)
                 break
 
-    # 2. 优先轮次二：URL完全吻合 (对齐名称有轻微出入但URL确凿一致的专业)
+    # 2. 优先轮次二：URL完全吻合 或 URL Slug 精确吻合 (仅限 is_valid == True 在招专业参与匹配)
     for db_idx, db_row in df_db.iterrows():
         if db_idx in db_matched_indices:
             continue
+        if str(db_row.get('is_valid', '')).lower() != 'true':
+            continue
         db_url = str(db_row.get('program_website', '')).strip().lower()
+        db_slug = normalize_name(get_url_slug(db_url).replace('-', ' '))
         for off_idx, off_row in df_off.iterrows():
             if off_idx in off_matched_indices:
                 continue
             off_url = str(off_row.get('official_url', '')).strip().lower()
-            if db_url and off_url and (db_url == off_url or db_url in off_url or off_url in db_url):
+            off_slug = normalize_name(get_url_slug(off_url).replace('-', ' '))
+            
+            url_match = db_url and off_url and (db_url == off_url or db_url in off_url or off_url in db_url)
+            slug_match = bool(db_slug and off_slug and len(db_slug) > 6 and (db_slug == off_slug or db_slug in off_slug or off_slug in db_slug))
+            
+            if url_match or slug_match:
                 matched.append({
                     "category": "完全匹配",
                     "match_score": 1.0,
@@ -100,9 +135,11 @@ def diff_program_names(school="hku"):
                 db_matched_indices.add(db_idx)
                 break
 
-    # 3. 优先轮次三：针对剩余未匹配项，执行模糊匹配 (阈值 0.82)
+    # 3. 优先轮次三：针对剩余未匹配项，执行模糊匹配 (阈值 0.82) (仅限 is_valid == True 在招专业参与匹配)
     for db_idx, db_row in df_db.iterrows():
         if db_idx in db_matched_indices:
+            continue
+        if str(db_row.get('is_valid', '')).lower() != 'true':
             continue
         db_norm = db_row['norm_name']
         best_ratio = 0.0
@@ -111,7 +148,13 @@ def diff_program_names(school="hku"):
         for off_idx, off_row in df_off.iterrows():
             if off_idx in off_matched_indices:
                 continue
-            ratio = difflib.SequenceMatcher(None, db_norm, off_row['norm_name']).ratio()
+            off_norm = off_row['norm_name']
+            
+            # 避免 MBA 与 MSc 等不同学位体系之间产生歧义误配
+            if ('\bmba\b' in db_norm and '\bmba\b' not in off_norm) or ('\bmba\b' not in db_norm and '\bmba\b' in off_norm):
+                continue
+                
+            ratio = difflib.SequenceMatcher(None, db_norm, off_norm).ratio()
             if ratio > best_ratio:
                 best_ratio = ratio
                 best_off_idx = off_idx
@@ -149,11 +192,22 @@ def diff_program_names(school="hku"):
                 "db_is_valid": ""
             })
 
-    # 4. 收集数据库独有集（疑似停办/下线）
+    # 4. 收集数据库独有集（智能区分深圳校区与真正失效停办）
     for db_idx, db_row in df_db.iterrows():
         if db_idx not in db_matched_indices:
+            db_name_cn = str(db_row.get('program_name_cn', '') or '')
+            db_url = str(db_row.get('program_website', '') or '')
+            is_valid_str = str(db_row.get('is_valid', '')).lower()
+
+            if ('cuhk-shenzhen' in db_name_cn.lower() or '深圳' in db_name_cn) or ('cuhk.edu.cn' in db_url.lower()):
+                cat = "数据库独有(深圳校区/独立招生)"
+            elif is_valid_str == 'false':
+                cat = "数据库独有(已失效/历史归档)"
+            else:
+                cat = "数据库独有(疑似停办/下线)"
+
             unmatched_db.append({
-                "category": "数据库独有(疑似停办/下线)",
+                "category": cat,
                 "match_score": 0.0,
                 "db_id": db_row['id'],
                 "db_name_en": db_row['program_name_en'],

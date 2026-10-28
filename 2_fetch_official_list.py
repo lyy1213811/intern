@@ -5,6 +5,7 @@ import argparse
 from datetime import datetime
 import requests
 import pandas as pd
+from bs4 import BeautifulSoup
 
 if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8')
@@ -19,7 +20,10 @@ EXCLUDE_NAME_KEYWORDS = [
     'doctor of', 
     'postgraduate diploma', 
     'postgraduate certificate', 
-    'advanced diploma'
+    'advanced diploma',
+    'pgd in',
+    'executive diploma',
+    'certificate in'
 ]
 
 def fetch_hku_official_list(school="hku"):
@@ -113,13 +117,103 @@ def fetch_hku_official_list(school="hku"):
 
     return df, out_file
 
+def fetch_cuhk_official_list(school="cuhk"):
+    out_dir = os.path.join("data", school.lower())
+    os.makedirs(out_dir, exist_ok=True)
+    out_file = os.path.join(out_dir, "official_list.csv")
+
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    }
+
+    faculties = [
+        ('Faculty of Arts', 'arts'),
+        ('CUHK Business School', 'business-administration'),
+        ('Faculty of Education', 'education'),
+        ('Faculty of Engineering', 'engineering'),
+        ('Inter-Faculty', 'inter-faculty'),
+        ('Faculty of Law', 'law'),
+        ('Faculty of Medicine', 'medicine'),
+        ('Faculty of Science', 'science'),
+        ('Faculty of Social Science', 'social-science')
+    ]
+
+    print("[*] 正在从香港中文大学研究生院官网抓取全量在招授课型硕士 (TPg) 列表...")
+    records = []
+
+    for fac_name, fac_slug in faculties:
+        url = f'https://www.gs.cuhk.edu.hk/programmes/{fac_slug}'
+        try:
+            r = requests.get(url, headers=headers, timeout=25)
+            r.raise_for_status()
+            soup = BeautifulSoup(r.text, 'html.parser')
+            
+            merge_rows = soup.find_all('div', class_='mergeRow')
+            for mr in merge_rows:
+                taught_col = mr.find('div', class_='TaughtProgrammes')
+                if not taught_col:
+                    continue
+                
+                links = taught_col.find_all('a', href=True)
+                if links:
+                    for a in links:
+                        prog_name = a.get_text(strip=True)
+                        href = a['href']
+                        if not href.startswith('http'):
+                            href = f'https://www.gs.cuhk.edu.hk{href}'
+                        
+                        name_lower = prog_name.lower()
+                        if any(kw in name_lower for kw in EXCLUDE_NAME_KEYWORDS):
+                            continue
+                        if not prog_name:
+                            continue
+                            
+                        records.append({
+                            "official_program_name": prog_name,
+                            "faculty": fac_name,
+                            "official_url": href
+                        })
+                else:
+                    text = taught_col.get_text(strip=True)
+                    if text:
+                        name_lower = text.lower()
+                        if not any(kw in name_lower for kw in EXCLUDE_NAME_KEYWORDS):
+                            records.append({
+                                "official_program_name": text,
+                                "faculty": fac_name,
+                                "official_url": ""
+                            })
+        except Exception as e:
+            print(f"[-] 抓取学院 {fac_slug} 异常: {e}")
+
+    df = pd.DataFrame(records)
+    df = df.drop_duplicates(subset=['official_program_name', 'official_url'])
+    df = df.sort_values(by=['faculty', 'official_program_name']).reset_index(drop=True)
+
+    if os.path.exists(out_file):
+        backup_dir = os.path.join(out_dir, "backup")
+        os.makedirs(backup_dir, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_path = os.path.join(backup_dir, f"official_list_{timestamp}.csv")
+        shutil.copy2(out_file, backup_path)
+        print(f"[*] 检测到已存在历史文件，已自动备份至: {backup_path}")
+
+    df.to_csv(out_file, index=False, encoding='utf-8-sig')
+    print(f"[OK] 成功抓取香港中文大学官网在招授课型硕士 (TPg) 共 {len(df)} 门专业！")
+    print(f"[OK] 产出文件保存至: {out_file}")
+
+    return df, out_file
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="步骤2：抓取指定院校官网在招专业列表")
-    parser.add_argument("--school", default="hku", help="院校代码，如 hku")
+    parser.add_argument("--school", default="hku", help="院校代码，如 hku, cuhk")
     args = parser.parse_args()
 
-    if args.school.lower() == "hku":
+    school_key = args.school.lower()
+    if school_key == "hku":
         fetch_hku_official_list(args.school)
+    elif school_key == "cuhk":
+        fetch_cuhk_official_list(args.school)
     else:
         print(f"当前暂未适配院校 {args.school}，已默认执行 hku")
         fetch_hku_official_list("hku")
