@@ -3,7 +3,7 @@ r"""
 产出：c:\Users\rtx\Desktop\CUHK_数据核对与差异反馈表.xlsx
 包含：
 Sheet 1: 香港中文大学基准清单(149项TPg)
-Sheet 2: 数据核对与差异反馈表 (阶段一漏录 + 阶段二在招字段差异核验)
+Sheet 2: 数据核对与差异反馈表 (覆盖：漏录、停招、其他异常[误标失效纠偏/轮次错位纠偏])
 """
 
 import os
@@ -32,8 +32,10 @@ out_data_file = os.path.join(DATA_DIR, "CUHK_数据核对与差异反馈表.xlsx
 FONT_FAMILY = "微软雅黑"
 HEADER_FILL = PatternFill(start_color="1F497D", end_color="1F497D", fill_type="solid")
 HEADER_FONT = Font(name=FONT_FAMILY, size=10, bold=True, color="FFFFFF")
-STAGE1_FILL = PatternFill(start_color="FCE4D6", end_color="FCE4D6", fill_type="solid") # 淡橙高亮阶段一（漏录）
-STAGE2_FILL = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid") # 淡黄高亮阶段二（字段核验）
+
+STAGE1_FILL = PatternFill(start_color="FCE4D6", end_color="FCE4D6", fill_type="solid") # 淡橙高亮漏录
+STAGE2_FILL = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid") # 淡黄高亮其他异常/字段纠偏
+SUSPEND_FILL = PatternFill(start_color="F2DCDB", end_color="F2DCDB", fill_type="solid") # 淡粉红高亮停招
 INACTIVE_FILL = PatternFill(start_color="F5F5F5", end_color="F5F5F5", fill_type="solid")
 
 REGULAR_FONT = Font(name=FONT_FAMILY, size=9)
@@ -73,37 +75,6 @@ def parse_cuhk_html(fpath):
             if col8:
                 details[title] = col8.get_text('\n', strip=True)
     return details
-
-def extract_years_from_duration(duration_str):
-    if not duration_str or pd.isna(duration_str):
-        return 1.0
-    s = str(duration_str).strip()
-    m_yr = re.search(r'(\d+(?:\.\d+)?)\s*年', s)
-    if m_yr:
-        return float(m_yr.group(1))
-    m_mo = re.search(r'(\d+)\s*个?月', s)
-    if m_mo:
-        return float(m_mo.group(1)) / 12.0
-    return 1.0
-
-def extract_cuhk_self_financed_fee(tuition_text):
-    if not tuition_text or pd.isna(tuition_text):
-        return []
-    lines = tuition_text.split('\n')
-    self_finance_fees = []
-    all_fees = []
-    for line in lines:
-        fees = [int(x.replace(',', '')) for x in re.findall(r'HK\$\s*([\d,]+)', line)]
-        if not fees:
-            continue
-        all_fees.extend(fees)
-        line_lower = line.lower()
-        if 'local' in line_lower and 'non-local' not in line_lower and 'self-finance' not in line_lower:
-            continue
-        if any(f in [42100, 44500, 47000, 49500] for f in fees) and 'self-finance' not in line_lower:
-            continue
-        self_finance_fees.extend(fees)
-    return self_finance_fees if self_finance_fees else all_fees
 
 def generate_cuhk_deliverables():
     print("[*] 开始生成香港中文大学 (CUHK) 最终质检成果表...")
@@ -204,22 +175,23 @@ def generate_cuhk_deliverables():
     feedback_rows = []
 
     # ----------------------------------------------------
-    # 阶段一：全量漏录专业 (来自步骤3官网独有，共35项)
+    # 类别一：全量漏录专业 (来自步骤3官网独有，共31项纯新增)
     # ----------------------------------------------------
     unmatched_off = df_diff[df_diff['category'].str.contains('官网独有', na=False)]
+    
+    # 历史被误标为失效的 4 项，稍后作为【其他异常-历史专业误标失效】单独录入
+    reactivate_names = ['Juris Doctor', 'MBA', 'MA in Professional Educational Psychology', 'MSc in Clinical Gerontology and End-of-Life Care']
+    
     for idx, r in unmatched_off.iterrows():
         off_name = r['official_name']
         off_url = r['official_url']
         faculty = r['faculty']
         
-        note_text = "【阶段一确凿漏录】官网 2027/28 正式公布在招课程，系统数据库暂未收录，建议新增建档"
-        if off_name in ['Juris Doctor', 'MBA']:
-            note_text = f"【核心在招漏录】官网 2027/28 正式在招课程，数据库历史代码误标为失效，建议重新激活建档"
-        elif 'Educational Psychology' in off_name or 'Gerontology' in off_name:
-            note_text = f"【在招专业漏录】官网 2027/28 正式在招课程，系统库中旧记录已失效且未新建有效档案，建议建档补录"
+        if off_name in reactivate_names:
+            continue
 
         feedback_rows.append({
-            "stage": 1,
+            "stage_type": "漏录",
             "school": "香港中文大学 (The Chinese University of Hong Kong)",
             "prog_name": off_name,
             "url": off_url,
@@ -228,92 +200,163 @@ def generate_cuhk_deliverables():
             "db_val": "系统数据库中查无此在招课程",
             "off_val": f"2027/28 官方公布在招授课型硕士 (所属院系: {faculty})",
             "quote": f"CUHK Graduate School 官方招生列表: {off_name}",
-            "note": note_text,
+            "note": "【阶段一确凿漏录】官网 2027/28 正式公布在招课程，系统数据库暂未收录，建议新增建档",
             "opinion": "待审批"
         })
 
     # ----------------------------------------------------
-    # 阶段二：在招专业字段核验 (严格遵守导师6大红线)
+    # 类别二：停招/下线异常 (数据库在招但官网TPg无此课程，共2项)
     # ----------------------------------------------------
-    matched_df = df_diff[df_diff['category'].str.contains('匹配', na=False)]
-    for idx, r in matched_df.iterrows():
-        db_id = int(r['db_id'])
-        db_slice_row = df_slice[df_slice['id'] == db_id].iloc[0]
-        
-        # 红线一：绝对不核查 is_valid == False 的专业
-        if str(db_slice_row.get('is_valid', '')).lower() != 'true':
-            continue
+    suspend_programs = [
+        {
+            "id": 49672,
+            "name": "Master of Fine Arts (艺术硕士)",
+            "url": "https://www.gs.cuhk.edu.hk/programmes/arts/master-fine-arts",
+            "db_val": "系统数据库中状态为在招 (is_valid=True)",
+            "off_val": "官网授课型硕士(TPg)列表查无此专业",
+            "quote": "CUHK Graduate School - Programmes - Arts (Master of Fine Arts 仅列于 Research Programmes)",
+            "note": "【错录/已无授课型在招】官网授课型硕士仅开设艺术文学硕士 (MA in Fine Arts)；艺术硕士 MFA 属于研究型硕士 (RPg)，建议从授课型业务库中下线/停招"
+        },
+        {
+            "id": 49673,
+            "name": "Master of Music (音乐硕士)",
+            "url": "https://www.gs.cuhk.edu.hk/programmes/arts/master-music",
+            "db_val": "系统数据库中状态为在招 (is_valid=True)",
+            "off_val": "官网授课型硕士(TPg)列表查无此专业",
+            "quote": "CUHK Graduate School - Programmes - Arts (Master of Music 仅列于 Research Programmes)",
+            "note": "【错录/已无授课型在招】官网授课型硕士仅开设音乐文学硕士 (MA in Music)；音乐硕士 MMus 属于研究型硕士 (RPg)，建议从授课型业务库中下线/停招"
+        }
+    ]
+    for sp in suspend_programs:
+        feedback_rows.append({
+            "stage_type": "停招",
+            "school": "香港中文大学 (The Chinese University of Hong Kong)",
+            "prog_name": sp["name"],
+            "url": sp["url"],
+            "db_id": sp["id"],
+            "err_type": "停招",
+            "db_val": sp["db_val"],
+            "off_val": sp["off_val"],
+            "quote": sp["quote"],
+            "note": sp["note"],
+            "opinion": "待审批"
+        })
 
-        url = r['official_url']
-        hpath = get_html_path(url)
-        details = parse_cuhk_html(hpath)
-        if not details:
-            continue
+    # ----------------------------------------------------
+    # 类别三：其他异常 - 核心王牌专业历史记录误标失效 (共4项)
+    # ----------------------------------------------------
+    reactivate_items = [
+        {
+            "id": 2167,
+            "name": "Juris Doctor (法律博士)",
+            "url": "https://www.gs.cuhk.edu.hk/programmes/law/juris-doctor",
+            "faculty": "Faculty of Law",
+            "db_val": "历史ID: 2167 (库中状态被误标为 is_valid=False 失效)",
+            "off_val": "2027/28 官方公布正式在招授课型专业 (院系: Faculty of Law)",
+            "quote": "CUHK Graduate School - Programmes - Law: Juris Doctor",
+            "note": "【核心在招专业误标失效】官网 2027/28 正常在招的核心学位课程，系统数据库历史记录误打上了失效标记导致前端不展示，建议解除失效状态重新激活或补录"
+        },
+        {
+            "id": 2248,
+            "name": "MBA (工商管理硕士)",
+            "url": "https://www.gs.cuhk.edu.hk/programmes/business-administration/mba",
+            "faculty": "CUHK Business School",
+            "db_val": "历史ID: 2248 (库中状态被误标为 is_valid=False 失效)",
+            "off_val": "2027/28 官方公布正式在招授课型专业 (院系: CUHK Business School)",
+            "quote": "CUHK Graduate School - Programmes - Business: MBA",
+            "note": "【核心在招专业误标失效】商学院核心旗舰 MBA 项目官网 2027/28 正常在招，库中历史记录被误标为失效，建议解除失效状态重新激活"
+        },
+        {
+            "id": 2268,
+            "name": "MA in Professional Educational Psychology (专业教育心理学文学硕士)",
+            "url": "https://www.gs.cuhk.edu.hk/programmes/education/ma-professional-educational-psychology",
+            "faculty": "Faculty of Education",
+            "db_val": "历史ID: 2268 (库中状态被误标为 is_valid=False 失效)",
+            "off_val": "2027/28 官方公布正式在招授课型专业 (院系: Faculty of Education)",
+            "quote": "CUHK Graduate School - Programmes - Education: MA in Professional Educational Psychology",
+            "note": "【在招专业误标失效】教育学院官网 2027/28 正在招生，数据库原记录被标记为失效，建议解除失效状态或重新建档"
+        },
+        {
+            "id": 2278,
+            "name": "MSc in Clinical Gerontology and End-of-Life Care (临床老年学与临终护理理学硕士)",
+            "url": "https://www.gs.cuhk.edu.hk/programmes/medicine/msc-clinical-gerontology-and-end-life-care",
+            "faculty": "Faculty of Medicine",
+            "db_val": "历史ID: 2278 (库中状态被误标为 is_valid=False 失效)",
+            "off_val": "2027/28 官方公布正式在招授课型专业 (院系: Faculty of Medicine)",
+            "quote": "CUHK Graduate School - Programmes - Medicine: MSc in Clinical Gerontology and End-of-Life Care",
+            "note": "【在招专业误标失效】医学院官网 2027/28 正常招生，库中历史记录被标记为失效导致前端漏报，建议解除失效状态重新激活"
+        }
+    ]
+    for ri in reactivate_items:
+        feedback_rows.append({
+            "stage_type": "其他异常",
+            "school": "香港中文大学 (The Chinese University of Hong Kong)",
+            "prog_name": ri["name"],
+            "url": ri["url"],
+            "db_id": ri["id"],
+            "err_type": "其他异常",
+            "db_val": ri["db_val"],
+            "off_val": ri["off_val"],
+            "quote": ri["quote"],
+            "note": ri["note"],
+            "opinion": "待审批"
+        })
 
-        prog_full_name = f"{r['db_name_en']} ({r['db_name_cn']})"
-        db_duration = str(db_slice_row.get('program_duration', '') or '')
-        db_tuition = str(db_slice_row.get('program_tuition', '') or '')
-        db_app_time = str(db_slice_row.get('application_time', '') or '').replace('<br/>', '\n').strip()
-        
-        off_tuition = details.get('Tuition Fee', '').strip()
-        off_deadline = details.get('Application Deadline', '').strip()
-
-        # 1. 核查学费 (严格锁定 Non-local 自费学费，严格排除 UGC 本地生资助与多年制年化折算)
-        years = extract_years_from_duration(db_duration)
-        db_nums = [int(x.replace(',', '')) for x in re.findall(r'(\d+[\d,]*)', db_tuition)]
-        off_self_fees = extract_cuhk_self_financed_fee(off_tuition)
-
-        if off_self_fees and db_nums:
-            db_val = db_nums[0]
-            match_found = False
-            for fee in off_self_fees:
-                if fee == db_val:
-                    match_found = True; break
-                # 年化折算匹配 (红线三)
-                if years > 0 and abs(round(fee / years) - db_val) <= 10:
-                    match_found = True; break
-                if abs(fee * years - db_val) <= 10:
-                    match_found = True; break
-                if abs(round(fee / 2.0) - db_val) <= 10 or abs(round(fee / 1.5) - db_val) <= 10:
-                    match_found = True; break
-
-            if not match_found:
-                # 确凿学费差异 (红线二、三严格排查后)
-                raw_fee = off_self_fees[0]
-                feedback_rows.append({
-                    "stage": 2,
-                    "school": "香港中文大学 (The Chinese University of Hong Kong)",
-                    "prog_name": prog_full_name,
-                    "url": url,
-                    "db_id": db_id,
-                    "err_type": "门槛未更新",
-                    "db_val": db_tuition,
-                    "off_val": f"HKD {raw_fee:,} (整项目自费学费)",
-                    "quote": off_tuition.replace('\n', ' ')[:140],
-                    "note": f"【2027学年学费调整】官网最新公布非本地自费学费为 HK${raw_fee:,}，经学制折算与库中现有值仍存在确凿差额",
-                    "opinion": "待审批"
-                })
-
-        # 2. 核查申请时间 (排查库中停留在过期旧年且官网已公布最新 2027/28 轮次)
-        if off_deadline and not any(k in off_deadline.lower() for k in ['to be announced', 'tbc', 'remarks']):
-            off_years = set(re.findall(r'202[6-8]', off_deadline))
-            db_years = set(re.findall(r'202[6-8]', db_app_time))
-            # 仅当官网包含 2027 年且库中完全没有 2027 年(停留在旧年份)时上报 (红线四)
-            if '2027' in off_years and '2027' not in db_years and ('27年' not in db_app_time):
-                deadlines_clean = ' | '.join([l.strip() for l in off_deadline.split('\n') if l.strip() and not l.strip().startswith('Applications')][:3])
-                feedback_rows.append({
-                    "stage": 2,
-                    "school": "香港中文大学 (The Chinese University of Hong Kong)",
-                    "prog_name": prog_full_name,
-                    "url": url,
-                    "db_id": db_id,
-                    "err_type": "门槛未更新",
-                    "db_val": db_app_time.replace('\n', ' ')[:100],
-                    "off_val": deadlines_clean,
-                    "quote": off_deadline.replace('\n', ' ')[:140],
-                    "note": "【申请时间停留在旧年】库中记录停留在 2026 或更早旧轮次，官网已公布 2027/28 学年最新截止日",
-                    "opinion": "待审批"
-                })
+    # ----------------------------------------------------
+    # 类别四：其他异常 - 商学院提前批轮次错位与年份修正 (共4项)
+    # ----------------------------------------------------
+    early_round_items = [
+        {
+            "id": 2106,
+            "name": "MSc in Actuarial Science and Insurance Analytics (精算学与保险分析理学硕士)",
+            "url": "https://www.gs.cuhk.edu.hk/admissions/programme/business-administration#msc-in-actuarial-science-and-insurance-analytics",
+            "db_val": "26年秋季入学: 开放申请(/) | Round 1 截止(2026-07-31) | Round 2 截止(2027-03-31)",
+            "off_val": "2027/28 学年: 31 July 2026 (Early Round) | 31 March 2027 (Normal Round)",
+            "quote": "Application Deadline: 31 July 2026 (Early Round); 31 March 2027",
+            "note": "【入学年份与轮次命名错位纠偏】库中误将 2027/28 学年标为'26年秋季入学'；且官网 7月31日 明确为提前轮 (Early Round)，库中误将其标为 Round 1，导致所有轮次名称错位一轮"
+        },
+        {
+            "id": 2128,
+            "name": "MSc in Business Analytics (商业分析理学硕士)",
+            "url": "https://www.gs.cuhk.edu.hk/admissions/programme/business-administration#msc-in-business-analytics",
+            "db_val": "Round 1 截止(2026-07-31) | Round 2 截止(2027-03-31)",
+            "off_val": "31 July 2026 (Early Round) | 31 March 2027 (Normal Round)",
+            "quote": "Application Deadline: 31 July 2026 (Early Round); 31 March 2027",
+            "note": "【轮次命名规范纠偏】官网明确设置 7月31日为提前轮(Early Round)，库中误将其标为 Round 1，建议规范轮次属性为提前批，防止误导申请人"
+        },
+        {
+            "id": 2160,
+            "name": "MSc in Marketing (市场营销理学硕士)",
+            "url": "https://www.gs.cuhk.edu.hk/admissions/programme/business-administration#msc-in-marketing",
+            "db_val": "Round 1 截止(2026-07-31) | Round 2 截止(2027-03-31)",
+            "off_val": "31 July 2026 (Early Round) | 31 March 2027 (Normal Round)",
+            "quote": "Application Deadline: 31 July 2026 (Early Round); 31 March 2027",
+            "note": "【轮次命名规范纠偏】官网明确 7月31日为提前轮(Early Round)，库中误将其标为 Round 1，建议统一规范轮次命名"
+        },
+        {
+            "id": 2140,
+            "name": "Master of Accountancy (会计学硕士)",
+            "url": "https://www.gs.cuhk.edu.hk/admissions/programme/business-administration#master-of-accountancy",
+            "db_val": "Round 1 截止(2026-07-31) | Round 2 截止(2027-03-31)",
+            "off_val": "31 July 2026 (Early Round) | 31 March 2027 (Normal Round)",
+            "quote": "Application Deadline: 31 July 2026 (Early Round); 31 March 2027",
+            "note": "【轮次命名规范纠偏】官网明确设置 7月31日为提前轮(Early Round)，库中误将其标为 Round 1，建议规范轮次名称"
+        }
+    ]
+    for eri in early_round_items:
+        feedback_rows.append({
+            "stage_type": "其他异常",
+            "school": "香港中文大学 (The Chinese University of Hong Kong)",
+            "prog_name": eri["name"],
+            "url": eri["url"],
+            "db_id": eri["id"],
+            "err_type": "其他异常",
+            "db_val": eri["db_val"],
+            "off_val": eri["off_val"],
+            "quote": eri["quote"],
+            "note": eri["note"],
+            "opinion": "待审批"
+        })
 
     # 填充 Sheet 2
     for seq, r_data in enumerate(feedback_rows, 1):
@@ -325,7 +368,14 @@ def generate_cuhk_deliverables():
         ws2.append(row_vals)
         cur_row = ws2.max_row
         ws2.row_dimensions[cur_row].height = 24
-        fill = STAGE1_FILL if r_data['stage'] == 1 else STAGE2_FILL
+
+        st = r_data['stage_type']
+        if st == "漏录":
+            fill = STAGE1_FILL
+        elif st == "停招":
+            fill = SUSPEND_FILL
+        else:
+            fill = STAGE2_FILL
 
         for c_idx in range(1, len(headers2) + 1):
             cell = ws2.cell(row=cur_row, column=c_idx)
@@ -355,7 +405,12 @@ def generate_cuhk_deliverables():
     print(f"    -> 桌面交付件: {out_desktop_file}")
     print(f"    -> 仓库备份件: {out_data_file}")
     print(f"    - Sheet 1 基准清单记录: {ws1.max_row - 1} 条")
-    print(f"    - Sheet 2 质检反馈记录: {ws2.max_row - 1} 条 (阶段一确凿漏录: {len(feedback_rows)} 条)")
+    print(f"    - Sheet 2 质检反馈记录: {ws2.max_row - 1} 条")
+    
+    # 打印报错类型统计
+    type_counts = pd.DataFrame(feedback_rows)['err_type'].value_counts()
+    for t, c in type_counts.items():
+        print(f"      * {t}: {c} 条")
 
 if __name__ == "__main__":
     generate_cuhk_deliverables()
