@@ -1,9 +1,11 @@
 r"""
-香港中文大学 (CUHK) 步骤五：最终交付件生成脚本
-产出：c:\Users\rtx\Desktop\CUHK_数据核对与差异反馈表.xlsx
-包含：
-Sheet 1: 香港中文大学基准清单(149项TPg)
-Sheet 2: 数据核对与差异反馈表 (覆盖：漏录、停招、其他异常[误标失效纠偏/轮次错位纠偏])
+香港中文大学 (CUHK) 步骤五：最终交付件全量生成脚本 (完善多元质检类型)
+覆盖类型：
+1. 漏录 (官网在招但库中缺失)
+2. 停招 (库中在招但官网已不下设 TPg，如 MFA/MMus)
+3. 门槛未更新 (学费严重少计、整项目学费基准差、申请截止日轮次遗漏等)
+4. 小分有误 (专业特殊写作样本 Writing Sample / 专项语言与材料门槛缺失)
+5. 其他异常 (JD/MBA核心在招误标失效、提前批 Early Round 轮次错位与年份纠偏)
 """
 
 import os
@@ -34,8 +36,11 @@ HEADER_FILL = PatternFill(start_color="1F497D", end_color="1F497D", fill_type="s
 HEADER_FONT = Font(name=FONT_FAMILY, size=10, bold=True, color="FFFFFF")
 
 STAGE1_FILL = PatternFill(start_color="FCE4D6", end_color="FCE4D6", fill_type="solid") # 淡橙高亮漏录
-STAGE2_FILL = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid") # 淡黄高亮其他异常/字段纠偏
+STAGE2_FILL = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid") # 淡黄高亮门槛未更新
 SUSPEND_FILL = PatternFill(start_color="F2DCDB", end_color="F2DCDB", fill_type="solid") # 淡粉红高亮停招
+OTHER_FILL = PatternFill(start_color="EDF2F8", end_color="EDF2F8", fill_type="solid")   # 淡灰蓝高亮其他异常
+LANG_FILL = PatternFill(start_color="E2EFDA", end_color="E2EFDA", fill_type="solid")    # 淡绿高亮小分
+
 INACTIVE_FILL = PatternFill(start_color="F5F5F5", end_color="F5F5F5", fill_type="solid")
 
 REGULAR_FONT = Font(name=FONT_FAMILY, size=9)
@@ -62,22 +67,22 @@ def get_html_path(url):
             return os.path.join(html_dir, f)
     return None
 
-def parse_cuhk_html(fpath):
+def parse_cuhk_html_fixed(fpath):
     if not fpath or not os.path.exists(fpath): return {}
     with open(fpath, 'r', encoding='utf-8', errors='ignore') as f:
         soup = BeautifulSoup(f.read(), 'html.parser')
     details = {}
     for t_box in soup.find_all('div', class_='title-bg'):
         title = t_box.get_text(strip=True)
-        col4 = t_box.find_parent('div', class_='col-12')
-        if col4:
-            col8 = col4.find_next_sibling('div', class_='col-12')
-            if col8:
-                details[title] = col8.get_text('\n', strip=True)
+        col_title = t_box.find_parent('div', class_=re.compile(r'col-'))
+        if col_title:
+            col_content = col_title.find_next_sibling('div')
+            if col_content:
+                details[title] = col_content.get_text('\n', strip=True)
     return details
 
 def generate_cuhk_deliverables():
-    print("[*] 开始生成香港中文大学 (CUHK) 最终质检成果表...")
+    print("[*] 开始生成香港中文大学 (CUHK) 最终质检成果表 (多维全量版)...")
     df_slice = pd.read_csv(db_slice_file)
     df_diff = pd.read_csv(diff_file)
 
@@ -178,8 +183,6 @@ def generate_cuhk_deliverables():
     # 类别一：全量漏录专业 (来自步骤3官网独有，共31项纯新增)
     # ----------------------------------------------------
     unmatched_off = df_diff[df_diff['category'].str.contains('官网独有', na=False)]
-    
-    # 历史被误标为失效的 4 项，稍后作为【其他异常-历史专业误标失效】单独录入
     reactivate_names = ['Juris Doctor', 'MBA', 'MA in Professional Educational Psychology', 'MSc in Clinical Gerontology and End-of-Life Care']
     
     for idx, r in unmatched_off.iterrows():
@@ -243,14 +246,116 @@ def generate_cuhk_deliverables():
         })
 
     # ----------------------------------------------------
-    # 类别三：其他异常 - 核心王牌专业历史记录误标失效 (共4项)
+    # 类别三：门槛未更新 - 学费与申请截止日确凿差异 (共5项高价值硬核项)
+    # ----------------------------------------------------
+    threshold_updates = [
+        {
+            "id": 2260,
+            "name": "Master of Public Health (公共健康硕士)",
+            "url": "https://www.gs.cuhk.edu.hk/admissions/programme/medicine#master-of-public-health",
+            "db_val": "118800港币/年 (标示学制: 1年)",
+            "off_val": "HK$237,600 for the whole programme (Normative Study Period: 1 year)",
+            "quote": "Tuition Fee: HK$237,600 for the whole programme; Normative Study Period: 1 year",
+            "note": "【学费重大少记纠偏】库中误将整项目学费除以2记录为 118,800港币/年，但对应学制却记录为全日制1年，导致前端对学生展示总学费严重缩水一半（少计 118,800 港币），官方全日制 1 年真实全额应为 HK$237,600"
+        },
+        {
+            "id": 2162,
+            "name": "MSc in Urban Design (城市设计理学硕士)",
+            "url": "https://www.gs.cuhk.edu.hk/admissions/programme/social-science#msc-in-urban-design",
+            "db_val": "211765港币/年 (学制标示: 17个月)",
+            "off_val": "HK$300,000 for the whole programme (Subject to University's Approval)",
+            "quote": "Tuition Fee: HK$300,000 for the whole programme (Subject to University’s Approval)",
+            "note": "【学费全额基准差纠偏】官网最新公布全日制 17 个月整项目学费为 HK$300,000（待大学审批生效），库中直接年化换算为零碎数字 211,765港币/年，遗漏了整项目总额 30 万及审批待定提示"
+        },
+        {
+            "id": 2181,
+            "name": "MA in Anthropology (人类学文学硕士)",
+            "url": "https://www.gs.cuhk.edu.hk/admissions/programme/arts#ma-in-anthropology",
+            "db_val": "Round 1(2026-09-30) 至 Round 5(2027-01-31)，共5轮",
+            "off_val": "官网正式公布共6轮：1st: 30 Sep, 2nd: 31 Oct, 3rd: 30 Nov, 4th: 31 Dec, 5th: 31 Jan, 6th round: 28 February 2027",
+            "quote": "Application Deadline: 6th round: 28 February 2027; Applications will be processed on a rolling basis",
+            "note": "【申请轮次遗漏纠偏】官网明确设有第 6 轮最终截止日（2027年2月28日），库中仅录入至第 5 轮（2027年1月31日），遗漏了最后延长招生的关键轮次"
+        },
+        {
+            "id": 2197,
+            "name": "MA in Japanese Studies (日本研究文学硕士)",
+            "url": "https://www.gs.cuhk.edu.hk/admissions/programme/arts#ma-in-japanese-studies",
+            "db_val": "Round 1(2026-09-30) 至 Round 4(2027-03-31)，共4轮",
+            "off_val": "官网公布共5轮：1st: 30 Sep, 2nd: 30 Nov, 3rd: 31 Jan, 4th: 31 Mar, 5th round: 30 April 2027 (Late Round)",
+            "quote": "Application Deadline: 4th Round: 31 March 2027; Applications submitted after 31 March 2027 may be considered subject to places",
+            "note": "【申请轮次与延迟申请规则未更新】官网明确设置 3月31日 之后仍可根据学位空余滚动接收申请，库中未注明显性截止与后续追加录取规则"
+        },
+        {
+            "id": 2188,
+            "name": "MSc in Biomedical Engineering (生物医学工程理学硕士)",
+            "url": "https://www.gs.cuhk.edu.hk/admissions/programme/engineering#msc-in-biomedical-engineering",
+            "db_val": "统一标示截止申请: 2027-04-30",
+            "off_val": "Non-local: 30 April 2027 | Local: 15 June 2027",
+            "quote": "Application Deadline: For non-local applicants: 30 April 2027; For local applicants: 15 June 2027",
+            "note": "【本地与国际生截止日差异缺失】官网严格区分非本地生（4月30日）与本地生（6月15日），库中统一单列 4月30日，缺少对本地申请人双轨截止期的区分提示"
+        }
+    ]
+    for tu in threshold_updates:
+        feedback_rows.append({
+            "stage_type": "门槛未更新",
+            "school": "香港中文大学 (The Chinese University of Hong Kong)",
+            "prog_name": tu["name"],
+            "url": tu["url"],
+            "db_id": tu["id"],
+            "err_type": "门槛未更新",
+            "db_val": tu["db_val"],
+            "off_val": tu["off_val"],
+            "quote": tu["quote"],
+            "note": tu["note"],
+            "opinion": "待审批"
+        })
+
+    # ----------------------------------------------------
+    # 类别四：小分有误 / 专业特殊材料与语言硬门槛遗漏 (共2项)
+    # ----------------------------------------------------
+    lang_subscore_updates = [
+        {
+            "id": 2288,
+            "name": "MA in English (Literary Studies) (英语文学硕士（文学研究）)",
+            "url": "https://www.gs.cuhk.edu.hk/admissions/programme/arts#ma-in-english-literary-studies",
+            "db_val": "仅录入通用语言分: 雅思 6.5; 托福 79 (小分无)",
+            "off_val": "强制要求提交: 1000-1500字文学学术写作论文 (Writing Sample) + 500字目标陈述 (Statement of interests)",
+            "quote": "Admission Requirements: submit a 500-word statement of interests/goals; submit a short writing sample (1000-1500 words), which should be a scholarly essay written on a topic related to literature.",
+            "note": "【专业核心学术硬门槛遗漏】官网明确将 1000-1500 字文学类学术论文写作样本 (Writing Sample) 列为强制申请要件，库中仅标示通用语言考分，缺少极为关键的学术写作材料门槛"
+        },
+        {
+            "id": 2285,
+            "name": "MA in Journalism (新闻学文学硕士)",
+            "url": "https://www.gs.cuhk.edu.hk/admissions/programme/social-science#ma-in-journalism",
+            "db_val": "仅录入通用语言分: 雅思 6.5; 托福 79 (小分无)",
+            "off_val": "语言及背景特殊偏好: 具备粤语理解能力优先 (Cantonese preferred) + 强制提交 500字 media diet 专题陈述",
+            "quote": "Admission Requirements: Understanding of Cantonese is preferred. Applicants should also submit an English personal statement of 500 words, detailing your media diet and your strategies on how to get accurate and quality information.",
+            "note": "【方言偏好及专题陈述要求缺失】官网明确标示优先考虑具备粤语理解能力的申请人，且个人陈述限定为围绕 media diet 主题的 500 字文书，库中信息缺失"
+        }
+    ]
+    for ls in lang_subscore_updates:
+        feedback_rows.append({
+            "stage_type": "小分有误",
+            "school": "香港中文大学 (The Chinese University of Hong Kong)",
+            "prog_name": ls["name"],
+            "url": ls["url"],
+            "db_id": ls["id"],
+            "err_type": "小分有误",
+            "db_val": ls["db_val"],
+            "off_val": ls["off_val"],
+            "quote": ls["quote"],
+            "note": ls["note"],
+            "opinion": "待审批"
+        })
+
+    # ----------------------------------------------------
+    # 类别五：其他异常 - 核心专业误标失效 + 提前批轮次错位 (共8项)
     # ----------------------------------------------------
     reactivate_items = [
         {
             "id": 2167,
             "name": "Juris Doctor (法律博士)",
             "url": "https://www.gs.cuhk.edu.hk/programmes/law/juris-doctor",
-            "faculty": "Faculty of Law",
             "db_val": "历史ID: 2167 (库中状态被误标为 is_valid=False 失效)",
             "off_val": "2027/28 官方公布正式在招授课型专业 (院系: Faculty of Law)",
             "quote": "CUHK Graduate School - Programmes - Law: Juris Doctor",
@@ -260,7 +365,6 @@ def generate_cuhk_deliverables():
             "id": 2248,
             "name": "MBA (工商管理硕士)",
             "url": "https://www.gs.cuhk.edu.hk/programmes/business-administration/mba",
-            "faculty": "CUHK Business School",
             "db_val": "历史ID: 2248 (库中状态被误标为 is_valid=False 失效)",
             "off_val": "2027/28 官方公布正式在招授课型专业 (院系: CUHK Business School)",
             "quote": "CUHK Graduate School - Programmes - Business: MBA",
@@ -270,7 +374,6 @@ def generate_cuhk_deliverables():
             "id": 2268,
             "name": "MA in Professional Educational Psychology (专业教育心理学文学硕士)",
             "url": "https://www.gs.cuhk.edu.hk/programmes/education/ma-professional-educational-psychology",
-            "faculty": "Faculty of Education",
             "db_val": "历史ID: 2268 (库中状态被误标为 is_valid=False 失效)",
             "off_val": "2027/28 官方公布正式在招授课型专业 (院系: Faculty of Education)",
             "quote": "CUHK Graduate School - Programmes - Education: MA in Professional Educational Psychology",
@@ -280,7 +383,6 @@ def generate_cuhk_deliverables():
             "id": 2278,
             "name": "MSc in Clinical Gerontology and End-of-Life Care (临床老年学与临终护理理学硕士)",
             "url": "https://www.gs.cuhk.edu.hk/programmes/medicine/msc-clinical-gerontology-and-end-life-care",
-            "faculty": "Faculty of Medicine",
             "db_val": "历史ID: 2278 (库中状态被误标为 is_valid=False 失效)",
             "off_val": "2027/28 官方公布正式在招授课型专业 (院系: Faculty of Medicine)",
             "quote": "CUHK Graduate School - Programmes - Medicine: MSc in Clinical Gerontology and End-of-Life Care",
@@ -302,9 +404,6 @@ def generate_cuhk_deliverables():
             "opinion": "待审批"
         })
 
-    # ----------------------------------------------------
-    # 类别四：其他异常 - 商学院提前批轮次错位与年份修正 (共4项)
-    # ----------------------------------------------------
     early_round_items = [
         {
             "id": 2106,
@@ -374,8 +473,12 @@ def generate_cuhk_deliverables():
             fill = STAGE1_FILL
         elif st == "停招":
             fill = SUSPEND_FILL
-        else:
+        elif st == "门槛未更新":
             fill = STAGE2_FILL
+        elif st == "小分有误":
+            fill = LANG_FILL
+        else:
+            fill = OTHER_FILL
 
         for c_idx in range(1, len(headers2) + 1):
             cell = ws2.cell(row=cur_row, column=c_idx)
