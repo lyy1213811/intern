@@ -1,11 +1,12 @@
 r"""
-香港中文大学 (CUHK) 步骤五：最终交付件全量生成脚本 (完善多元质检类型)
+香港中文大学 (CUHK) 步骤五：最终交付件全量生成脚本 (排除提前批轮次错位项)
 覆盖类型：
-1. 漏录 (官网在招但库中缺失)
-2. 停招 (库中在招但官网已不下设 TPg，如 MFA/MMus)
-3. 门槛未更新 (学费严重少计、整项目学费基准差、申请截止日轮次遗漏等)
-4. 小分有误 (专业特殊写作样本 Writing Sample / 专项语言与材料门槛缺失)
-5. 其他异常 (JD/MBA核心在招误标失效、提前批 Early Round 轮次错位与年份纠偏)
+1. 漏录 (官网在招但库中缺失，共31项)
+2. 停招 (库中在招但官网已不下设 TPg，如 MFA/MMus，共2项)
+3. 门槛未更新 (学费重大少记、整项目学费基准差、申请截止日轮次遗漏等，共5项)
+4. 小分有误 (专业特殊写作样本 Writing Sample / 专项语言与材料门槛缺失，共2项)
+5. 其他异常 (JD/MBA等核心在招专业误标失效需激活，共4项)
+总计：44 项
 """
 
 import os
@@ -82,7 +83,7 @@ def parse_cuhk_html_fixed(fpath):
     return details
 
 def generate_cuhk_deliverables():
-    print("[*] 开始生成香港中文大学 (CUHK) 最终质检成果表 (多维全量版)...")
+    print("[*] 开始生成香港中文大学 (CUHK) 最终质检成果表 (已排除提前批)...")
     df_slice = pd.read_csv(db_slice_file)
     df_diff = pd.read_csv(diff_file)
 
@@ -349,7 +350,7 @@ def generate_cuhk_deliverables():
         })
 
     # ----------------------------------------------------
-    # 类别五：其他异常 - 核心专业误标失效 + 提前批轮次错位 (共8项)
+    # 类别五：其他异常 - 核心专业误标失效需激活 (共4项，排除提前批错位项)
     # ----------------------------------------------------
     reactivate_items = [
         {
@@ -404,59 +405,6 @@ def generate_cuhk_deliverables():
             "opinion": "待审批"
         })
 
-    early_round_items = [
-        {
-            "id": 2106,
-            "name": "MSc in Actuarial Science and Insurance Analytics (精算学与保险分析理学硕士)",
-            "url": "https://www.gs.cuhk.edu.hk/admissions/programme/business-administration#msc-in-actuarial-science-and-insurance-analytics",
-            "db_val": "26年秋季入学: 开放申请(/) | Round 1 截止(2026-07-31) | Round 2 截止(2027-03-31)",
-            "off_val": "2027/28 学年: 31 July 2026 (Early Round) | 31 March 2027 (Normal Round)",
-            "quote": "Application Deadline: 31 July 2026 (Early Round); 31 March 2027",
-            "note": "【入学年份与轮次命名错位纠偏】库中误将 2027/28 学年标为'26年秋季入学'；且官网 7月31日 明确为提前轮 (Early Round)，库中误将其标为 Round 1，导致所有轮次名称错位一轮"
-        },
-        {
-            "id": 2128,
-            "name": "MSc in Business Analytics (商业分析理学硕士)",
-            "url": "https://www.gs.cuhk.edu.hk/admissions/programme/business-administration#msc-in-business-analytics",
-            "db_val": "Round 1 截止(2026-07-31) | Round 2 截止(2027-03-31)",
-            "off_val": "31 July 2026 (Early Round) | 31 March 2027 (Normal Round)",
-            "quote": "Application Deadline: 31 July 2026 (Early Round); 31 March 2027",
-            "note": "【轮次命名规范纠偏】官网明确设置 7月31日为提前轮(Early Round)，库中误将其标为 Round 1，建议规范轮次属性为提前批，防止误导申请人"
-        },
-        {
-            "id": 2160,
-            "name": "MSc in Marketing (市场营销理学硕士)",
-            "url": "https://www.gs.cuhk.edu.hk/admissions/programme/business-administration#msc-in-marketing",
-            "db_val": "Round 1 截止(2026-07-31) | Round 2 截止(2027-03-31)",
-            "off_val": "31 July 2026 (Early Round) | 31 March 2027 (Normal Round)",
-            "quote": "Application Deadline: 31 July 2026 (Early Round); 31 March 2027",
-            "note": "【轮次命名规范纠偏】官网明确 7月31日为提前轮(Early Round)，库中误将其标为 Round 1，建议统一规范轮次命名"
-        },
-        {
-            "id": 2140,
-            "name": "Master of Accountancy (会计学硕士)",
-            "url": "https://www.gs.cuhk.edu.hk/admissions/programme/business-administration#master-of-accountancy",
-            "db_val": "Round 1 截止(2026-07-31) | Round 2 截止(2027-03-31)",
-            "off_val": "31 July 2026 (Early Round) | 31 March 2027 (Normal Round)",
-            "quote": "Application Deadline: 31 July 2026 (Early Round); 31 March 2027",
-            "note": "【轮次命名规范纠偏】官网明确设置 7月31日为提前轮(Early Round)，库中误将其标为 Round 1，建议规范轮次名称"
-        }
-    ]
-    for eri in early_round_items:
-        feedback_rows.append({
-            "stage_type": "其他异常",
-            "school": "香港中文大学 (The Chinese University of Hong Kong)",
-            "prog_name": eri["name"],
-            "url": eri["url"],
-            "db_id": eri["id"],
-            "err_type": "其他异常",
-            "db_val": eri["db_val"],
-            "off_val": eri["off_val"],
-            "quote": eri["quote"],
-            "note": eri["note"],
-            "opinion": "待审批"
-        })
-
     # 填充 Sheet 2
     for seq, r_data in enumerate(feedback_rows, 1):
         row_vals = [
@@ -504,7 +452,7 @@ def generate_cuhk_deliverables():
     # 保存
     wb.save(out_desktop_file)
     wb.save(out_data_file)
-    print(f"\n[OK] 香港中文大学最终成果表导出完成！")
+    print(f"\n[OK] 香港中文大学最终成果表导出完成 (已完全排除提前批)！")
     print(f"    -> 桌面交付件: {out_desktop_file}")
     print(f"    -> 仓库备份件: {out_data_file}")
     print(f"    - Sheet 1 基准清单记录: {ws1.max_row - 1} 条")
