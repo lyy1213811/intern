@@ -48,6 +48,7 @@ DIFF_FILLS = {
     "模糊匹配(疑似更名)": PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid"),
     "官网独有(疑似新增/漏录)": PatternFill(start_color="FCE4D6", end_color="FCE4D6", fill_type="solid"),
     "数据库独有(深圳校区/独立招生)": PatternFill(start_color="DDEBF7", end_color="DDEBF7", fill_type="solid"),
+    "数据库独有(广州校区/独立招生)": PatternFill(start_color="DDEBF7", end_color="DDEBF7", fill_type="solid"),
     "数据库独有(已失效/历史归档)": PatternFill(start_color="EDEDED", end_color="EDEDED", fill_type="solid"),
     "数据库独有(疑似停办/下线)": PatternFill(start_color="EDEDED", end_color="EDEDED", fill_type="solid")
 }
@@ -305,6 +306,6 @@ def main(school="cuhk"):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="步骤一至四精美Excel文档批量导出")
-    parser.add_argument("--school", default="cuhk", help="院校代码，如 hku, cuhk")
+    parser.add_argument("--school", default="hkust", help="院校代码，如 hku, cuhk, hkust")
     args = parser.parse_args()
     main(args.school)

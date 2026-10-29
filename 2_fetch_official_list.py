@@ -3,6 +3,7 @@ import sys
 import shutil
 import argparse
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
 import requests
 import pandas as pd
 from bs4 import BeautifulSoup
@@ -204,9 +205,110 @@ def fetch_cuhk_official_list(school="cuhk"):
 
     return df, out_file
 
+def fetch_hkust_official_list(school="hkust"):
+    out_dir = os.path.join("data", school.lower())
+    os.makedirs(out_dir, exist_ok=True)
+    out_file = os.path.join(out_dir, "official_list.csv")
+
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Referer': 'https://prog-crs.hkust.edu.hk/pgprog'
+    }
+
+    session = requests.Session()
+    print("[*] 正在访问香港科技大学官方课程库获取会话令牌...")
+    r_init = session.get('https://prog-crs.hkust.edu.hk/pgprog', headers=headers, timeout=20)
+    r_init.raise_for_status()
+    soup_init = BeautifulSoup(r_init.text, 'html.parser')
+    token_input = soup_init.find('input', id='token_post')
+    token_val = token_input.get('value', '') if token_input else ''
+
+    params = [
+        ('token_post', token_val),
+        ('is_s', 'Y'),
+        ('keyword', ''),
+        ('year', '2027-28'),
+        ('degree[]', 'MSC'),
+        ('degree[]', 'MA'),
+        ('degree[]', 'MBA'),
+        ('degree[]', 'MENG'),
+        ('degree[]', 'MPP'),
+        ('degree[]', 'MPM')
+    ]
+
+    print("[*] 正在从 print_result.php 检索 2027/28 授课型研究生 (TPg) 专业清单...")
+    r_search = session.get('https://prog-crs.hkust.edu.hk/pgprog/print_result.php', params=params, headers=headers, timeout=25)
+    r_search.raise_for_status()
+    soup = BeautifulSoup(r_search.text, 'html.parser')
+
+    items = []
+    for a in soup.find_all('a', href=True):
+        href = a['href']
+        if not href.startswith('/pgprog/'):
+            continue
+        p_school = a.find('div', class_='program-school')
+        p_name = a.find('div', class_='program-name')
+        p_deg = a.find('div', class_='program-degree')
+
+        school_container = a.find_parent('div', class_='school')
+        school_title = ''
+        if school_container:
+            st = school_container.find('div', class_='school-title')
+            if st:
+                school_title = st.get_text(strip=True)
+
+        url = f"https://prog-crs.hkust.edu.hk{href.rstrip('/')}"
+        items.append({
+            'faculty': school_title or (p_school.get_text(strip=True) if p_school else 'HKUST'),
+            'dept': p_school.get_text(strip=True) if p_school else '',
+            'name_raw': p_name.get_text(strip=True) if p_name else '',
+            'deg_raw': p_deg.get_text(strip=True) if p_deg else '',
+            'url': url
+        })
+
+    print(f"[*] 成功检索到官网目录项 {len(items)} 个，正在并发解析详情页标准全称...")
+
+    def fetch_title(item):
+        try:
+            resp = requests.get(item['url'], headers=headers, timeout=12)
+            sp = BeautifulSoup(resp.text, 'html.parser')
+            title_el = sp.find('div', class_='program-title') or sp.find('h2')
+            if title_el:
+                item['official_program_name'] = title_el.get_text(strip=True)
+            else:
+                item['official_program_name'] = f"{item['deg_raw']} {item['name_raw']}".strip()
+        except Exception:
+            item['official_program_name'] = f"{item['deg_raw']} {item['name_raw']}".strip()
+        return {
+            'official_program_name': item['official_program_name'],
+            'faculty': item['faculty'],
+            'official_url': item['url']
+        }
+
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        records = list(executor.map(fetch_title, items))
+
+    df = pd.DataFrame(records)
+    df = df.drop_duplicates(subset=['official_program_name', 'official_url'])
+    df = df.sort_values(by=['faculty', 'official_program_name']).reset_index(drop=True)
+
+    if os.path.exists(out_file):
+        backup_dir = os.path.join(out_dir, "backup")
+        os.makedirs(backup_dir, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_path = os.path.join(backup_dir, f"official_list_{timestamp}.csv")
+        shutil.copy2(out_file, backup_path)
+        print(f"[*] 检测到已存在历史文件，已自动备份至: {backup_path}")
+
+    df.to_csv(out_file, index=False, encoding='utf-8-sig')
+    print(f"[OK] 成功抓取香港科技大学官网在招授课型硕士 (TPg) 共 {len(df)} 门专业！")
+    print(f"[OK] 产出文件保存至: {out_file}")
+
+    return df, out_file
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="步骤2：抓取指定院校官网在招专业列表")
-    parser.add_argument("--school", default="hku", help="院校代码，如 hku, cuhk")
+    parser.add_argument("--school", default="hku", help="院校代码，如 hku, cuhk, hkust")
     args = parser.parse_args()
 
     school_key = args.school.lower()
@@ -214,6 +316,8 @@ if __name__ == "__main__":
         fetch_hku_official_list(args.school)
     elif school_key == "cuhk":
         fetch_cuhk_official_list(args.school)
+    elif school_key == "hkust":
+        fetch_hkust_official_list(args.school)
     else:
         print(f"当前暂未适配院校 {args.school}，已默认执行 hku")
         fetch_hku_official_list("hku")

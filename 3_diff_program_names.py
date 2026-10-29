@@ -15,23 +15,34 @@ def normalize_name(name):
         return ""
     # 去除星号与特殊标记
     s = name.replace('*', '').lower()
-    # 统一常见学位缩写
+    # 统一常见学位缩写与变体
     s = re.sub(r'\bm\.sc\.?\b', 'msc', s)
     s = re.sub(r'\bm\.a\.?\b', 'ma', s)
     s = re.sub(r'\bm\.ed\.?\b', 'med', s)
+    s = re.sub(r'\bm\.eng\.?\b', 'meng', s)
     s = re.sub(r'[\(\)\[\]\,\.\-\/\:\'\"]', ' ', s)
     s = re.sub(r'\bm\s+sc\b', 'msc', s)
     s = re.sub(r'\bm\s+a\b', 'ma', s)
+    s = re.sub(r'\bm\s+eng\b', 'meng', s)
+    s = re.sub(r'\bmaster of science and master of engineering\b', 'msc meng', s)
     s = re.sub(r'\bmaster of science\b', 'msc', s)
     s = re.sub(r'\bmaster of arts\b', 'ma', s)
+    s = re.sub(r'\bmaster of engineering\b', 'meng', s)
+    s = re.sub(r'\bmaster of public policy\b', 'mpp', s)
+    s = re.sub(r'\bmaster of public management\b', 'mpm', s)
+    s = re.sub(r'\bmaster of business administration\b', 'mba', s)
+    s = re.sub(r'\bpostgraduate diploma and\b', '', s)
+    s = re.sub(r'\bpostgraduate diploma\b', '', s)
+    s = re.sub(r'\bprograms?\b', '', s)
+    s = re.sub(r'\bin\b', '', s)
     s = re.sub(r'\s+', ' ', s).strip()
     return s
 
 def get_url_slug(url):
     if not isinstance(url, str):
         return ''
+    p = urlparse(url)
     import urllib.parse
-    p = urllib.parse.urlparse(url)
     q = urllib.parse.parse_qs(p.query)
     if 'programme' in q and q['programme']:
         return q['programme'][0].strip()
@@ -41,6 +52,19 @@ def get_url_slug(url):
     if base.lower() not in ['programme-details', 'programme', 'programmes', 'admissions', 'index.html', 'index', '']:
         return base
     return ''
+
+def is_independent_campus(school, db_row):
+    school_lower = school.lower()
+    cn = str(db_row.get('program_name_cn', '') or '')
+    en = str(db_row.get('program_name_en', '') or '')
+    url = str(db_row.get('program_website', '') or '')
+    if school_lower == 'cuhk':
+        if ('cuhk-shenzhen' in cn.lower() or '深圳' in cn) or ('cuhk.edu.cn' in url.lower()):
+            return "数据库独有(深圳校区/独立招生)"
+    elif school_lower == 'hkust':
+        if re.search(r'guangzhou|\(gz\)', en, re.I) or '广州' in cn or 'hkust-gz' in url.lower() or 'cft.hkust-gz' in url.lower():
+            return "数据库独有(广州校区/独立招生)"
+    return None
 
 def diff_program_names(school="hku"):
     base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -76,13 +100,11 @@ def diff_program_names(school="hku"):
     off_matched_indices = set()
     db_matched_indices = set()
 
-    # 1. 优先轮次一：规范化名称完全相同 (仅限 is_valid == True 在招专业参与匹配)
+    # 1. 优先轮次一：规范化名称完全相同 (仅限 is_valid == True 在招专业参与匹配，并排除异地校区)
     for db_idx, db_row in df_db.iterrows():
         if str(db_row.get('is_valid', '')).lower() != 'true':
             continue
-        db_name_cn = str(db_row.get('program_name_cn', '') or '')
-        db_url = str(db_row.get('program_website', '') or '')
-        if ('cuhk-shenzhen' in db_name_cn.lower() or '深圳' in db_name_cn) or ('cuhk.edu.cn' in db_url.lower()):
+        if is_independent_campus(school, db_row):
             continue
         db_norm = db_row['norm_name']
         for off_idx, off_row in df_off.iterrows():
@@ -111,9 +133,7 @@ def diff_program_names(school="hku"):
             continue
         if str(db_row.get('is_valid', '')).lower() != 'true':
             continue
-        db_name_cn = str(db_row.get('program_name_cn', '') or '')
-        db_url_raw = str(db_row.get('program_website', '') or '')
-        if ('cuhk-shenzhen' in db_name_cn.lower() or '深圳' in db_name_cn) or ('cuhk.edu.cn' in db_url_raw.lower()):
+        if is_independent_campus(school, db_row):
             continue
         db_url = str(db_row.get('program_website', '')).strip().lower()
         db_slug = normalize_name(get_url_slug(db_url).replace('-', ' '))
@@ -123,8 +143,8 @@ def diff_program_names(school="hku"):
             off_url = str(off_row.get('official_url', '')).strip().lower()
             off_slug = normalize_name(get_url_slug(off_url).replace('-', ' '))
             
-            url_match = db_url and off_url and (db_url == off_url or db_url in off_url or off_url in db_url)
-            slug_match = bool(db_slug and off_slug and len(db_slug) > 6 and (db_slug == off_slug or db_slug in off_slug or off_slug in db_slug))
+            url_match = bool(db_url and off_url and (db_url == off_url or db_url in off_url or off_url in db_url))
+            slug_match = bool(db_slug and off_slug and len(db_slug) > 3 and (db_slug == off_slug or db_slug in off_slug or off_slug in db_slug))
             
             if url_match or slug_match:
                 matched.append({
@@ -143,15 +163,13 @@ def diff_program_names(school="hku"):
                 db_matched_indices.add(db_idx)
                 break
 
-    # 3. 优先轮次三：针对剩余未匹配项，执行模糊匹配 (阈值 0.82) (仅限 is_valid == True 在招专业参与匹配)
+    # 3. 优先轮次三：针对剩余未匹配项，执行模糊匹配 (阈值 0.80) (仅限 is_valid == True 在招专业参与匹配)
     for db_idx, db_row in df_db.iterrows():
         if db_idx in db_matched_indices:
             continue
         if str(db_row.get('is_valid', '')).lower() != 'true':
             continue
-        db_name_cn = str(db_row.get('program_name_cn', '') or '')
-        db_url = str(db_row.get('program_website', '') or '')
-        if ('cuhk-shenzhen' in db_name_cn.lower() or '深圳' in db_name_cn) or ('cuhk.edu.cn' in db_url.lower()):
+        if is_independent_campus(school, db_row):
             continue
         db_norm = db_row['norm_name']
         best_ratio = 0.0
@@ -162,7 +180,7 @@ def diff_program_names(school="hku"):
                 continue
             off_norm = off_row['norm_name']
             
-            # 避免 MBA 与 MSc 等不同学位体系之间产生歧义误配
+            # 避免 MBA 与非 MBA 产生歧义误配
             if ('\bmba\b' in db_norm and '\bmba\b' not in off_norm) or ('\bmba\b' not in db_norm and '\bmba\b' in off_norm):
                 continue
                 
@@ -171,7 +189,7 @@ def diff_program_names(school="hku"):
                 best_ratio = ratio
                 best_off_idx = off_idx
 
-        if best_ratio >= 0.82 and best_off_idx is not None:
+        if best_ratio >= 0.80 and best_off_idx is not None:
             off_row = df_off.loc[best_off_idx]
             matched.append({
                 "category": "模糊匹配(疑似更名)",
@@ -188,7 +206,7 @@ def diff_program_names(school="hku"):
             off_matched_indices.add(best_off_idx)
             db_matched_indices.add(db_idx)
 
-    # 3. 收集官网独有集（疑似新增/漏录）
+    # 4. 收集官网独有集（疑似新增/漏录）
     for off_idx, off_row in df_off.iterrows():
         if off_idx not in off_matched_indices:
             unmatched_off.append({
@@ -204,19 +222,19 @@ def diff_program_names(school="hku"):
                 "db_is_valid": ""
             })
 
-    # 4. 收集数据库独有集（智能区分深圳校区与真正失效停办）
+    # 5. 收集数据库独有集（智能区分异地独立校区与真正失效停办）
     for db_idx, db_row in df_db.iterrows():
         if db_idx not in db_matched_indices:
-            db_name_cn = str(db_row.get('program_name_cn', '') or '')
-            db_url = str(db_row.get('program_website', '') or '')
             is_valid_str = str(db_row.get('is_valid', '')).lower()
 
             if is_valid_str == 'false':
                 cat = "数据库独有(已失效/历史归档)"
-            elif ('cuhk-shenzhen' in db_name_cn.lower() or '深圳' in db_name_cn) or ('cuhk.edu.cn' in db_url.lower()):
-                cat = "数据库独有(深圳校区/独立招生)"
             else:
-                cat = "数据库独有(疑似停办/下线)"
+                campus_cat = is_independent_campus(school, db_row)
+                if campus_cat:
+                    cat = campus_cat
+                else:
+                    cat = "数据库独有(疑似停办/下线)"
 
             unmatched_db.append({
                 "category": cat,
@@ -238,13 +256,13 @@ def diff_program_names(school="hku"):
     print(f"\n[OK] 大盘比对完成，产出文件: {out_file}")
     print(f"    - 成功匹配: {len(matched)} 项")
     print(f"    - 官网独有 (疑似新增/漏录): {len(unmatched_off)} 项")
-    print(f"    - 数据库独有 (疑似停办/更名): {len(unmatched_db)} 项")
+    print(f"    - 数据库独有: {len(unmatched_db)} 项 (含已失效及独立校区)")
 
     return df_diff
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="步骤3：大盘名单差集比对")
-    parser.add_argument("--school", default="hku", help="院校代码，如 hku")
+    parser.add_argument("--school", default="hku", help="院校代码，如 hku, cuhk, hkust")
     args = parser.parse_args()
 
     diff_program_names(args.school)

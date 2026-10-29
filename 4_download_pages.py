@@ -112,10 +112,13 @@ def download_pages(school="hku", max_workers=5):
             db_id = row.get('db_id', '')
             slug = get_url_slug(url)
             
-            if pd.notna(db_id) and str(db_id).strip() and str(db_id).strip().isdigit():
-                fname = f"{int(float(db_id))}_{sanitize_filename(slug)}.html"
-            else:
-                fname = f"{sanitize_filename(slug)}.html"
+            fname = f"{sanitize_filename(slug)}.html"
+            if pd.notna(db_id) and str(db_id).strip():
+                try:
+                    db_id_int = int(float(str(db_id).strip()))
+                    fname = f"{db_id_int}_{sanitize_filename(slug)}.html"
+                except Exception:
+                    pass
                 
             targets.append({
                 "url": url,
