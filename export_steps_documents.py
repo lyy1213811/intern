@@ -46,7 +46,9 @@ BORDER_THIN = Border(
 DIFF_FILLS = {
     "完全匹配": PatternFill(start_color="E2EFDA", end_color="E2EFDA", fill_type="solid"),
     "模糊匹配(疑似更名)": PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid"),
+    "官网独有(历史休眠专业2027/28重启在招)": PatternFill(start_color="E2EFDA", end_color="E2EFDA", fill_type="solid"),
     "官网独有(疑似新增/漏录)": PatternFill(start_color="FCE4D6", end_color="FCE4D6", fill_type="solid"),
+    "官网独有(兼读制/在职高管免录)": PatternFill(start_color="EDEDED", end_color="EDEDED", fill_type="solid"),
     "数据库独有(深圳校区/独立招生)": PatternFill(start_color="DDEBF7", end_color="DDEBF7", fill_type="solid"),
     "数据库独有(广州校区/独立招生)": PatternFill(start_color="DDEBF7", end_color="DDEBF7", fill_type="solid"),
     "数据库独有(已失效/历史归档)": PatternFill(start_color="EDEDED", end_color="EDEDED", fill_type="solid"),

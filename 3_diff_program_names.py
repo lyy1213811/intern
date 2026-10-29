@@ -206,19 +206,60 @@ def diff_program_names(school="hku"):
             off_matched_indices.add(best_off_idx)
             db_matched_indices.add(db_idx)
 
-    # 4. 收集官网独有集（疑似新增/漏录）
+    # 4. 收集官网独有集（智能区分兼读制免录、历史休眠重启在招与全日制真正漏录）
+    html_dir = os.path.join(data_dir, "htmls")
     for off_idx, off_row in df_off.iterrows():
         if off_idx not in off_matched_indices:
+            off_name = off_row['official_program_name']
+            off_url = str(off_row.get('official_url', '')).strip()
+            slug = get_url_slug(off_url).lower()
+
+            # 1. 检查是否为兼读制 / 在职高管项目 (按导师红线 1：严禁报漏录)
+            is_pt = False
+            if any(k in off_name.lower() for k in ['part-time', 'emba', 'executive master']) or \
+               any(k in off_url.lower() for k in ['part-time', 'pt-', 'emba', 'msc-gfin']):
+                is_pt = True
+            elif os.path.exists(html_dir):
+                # 从已下载快照中核查 Mode of Study
+                for fname in os.listdir(html_dir):
+                    if slug and slug in fname.lower() and fname.endswith('.html'):
+                        try:
+                            with open(os.path.join(html_dir, fname), 'r', encoding='utf-8', errors='ignore') as f:
+                                h_txt = f.read().lower()
+                                if 'mode of studypart-time' in h_txt.replace(' ', '') or 'part-time only' in h_txt:
+                                    is_pt = True
+                                    break
+                        except Exception:
+                            pass
+
+            # 2. 检查是否匹配数据库中已失效的历史专业 (休眠重启)
+            is_resumed = False
+            resumed_db_id = ""
+            for _, db_r in df_db[df_db['is_valid'].astype(str).str.lower() == 'false'].iterrows():
+                db_u = str(db_r.get('program_website', '')).lower()
+                db_s = get_url_slug(db_u).lower()
+                if (slug and db_s and slug == db_s) or (slug and slug in db_u):
+                    is_resumed = True
+                    resumed_db_id = str(db_r['id'])
+                    break
+
+            if is_pt:
+                cat = "官网独有(兼读制/在职高管免录)"
+            elif is_resumed:
+                cat = "官网独有(历史休眠专业2027/28重启在招)"
+            else:
+                cat = "官网独有(疑似新增/漏录)"
+
             unmatched_off.append({
-                "category": "官网独有(疑似新增/漏录)",
+                "category": cat,
                 "match_score": 0.0,
-                "db_id": "",
+                "db_id": resumed_db_id,
                 "db_name_en": "",
                 "db_name_cn": "",
-                "official_name": off_row['official_program_name'],
+                "official_name": off_name,
                 "faculty": off_row['faculty'],
                 "db_url": "",
-                "official_url": off_row['official_url'],
+                "official_url": off_url,
                 "db_is_valid": ""
             })
 
