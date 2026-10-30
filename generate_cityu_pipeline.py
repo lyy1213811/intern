@@ -1,9 +1,12 @@
 r"""
-香港城市大学 (CityU) 步骤二至五全流程自动化流水线脚本
+香港城市大学 (CityU) 步骤二至五全流程自动化流水线脚本 (深度契合 IDE Skill 规范优化版)
 按照 school-data-auditor 技能规范生成：
 1. data/cityu/official_list.csv & CityU_步骤一至四\步骤2_官网列表_official_list.xlsx
+   - 严格剔除 EMBA 高管班与东莞异地分校，生成纯净的 63 项全日制授课型硕士 (TPg) 官方在招基准池
 2. data/cityu/diff_programs.csv & CityU_步骤一至四\步骤3_差集比对_diff_programs.xlsx
+   - 63 项完全匹配 + 2 项高管班 (红线1) + 10 项东莞校区在招 (红线2) + 3 项东莞失效细分 (红线5) = 78 项
 3. CityU_步骤一至四\步骤4_网页清单_htmls_index.xlsx
+   - 78 项专业页面快照核验索引
 4. 香港城市大学_数据核对与差异反馈表.xlsx (同步写入 Desktop 与 CityU_步骤一至四)
    - Sheet 1: 香港城市大学在招专业总表(75项基线)
    - Sheet 2: 数据核对与差异反馈表 (严格 10 列，坚决无“审批意见”列！)
@@ -42,6 +45,7 @@ AUDIT_HEADER_FILL = PatternFill(start_color="C00000", end_color="C00000", fill_t
 PASS_FILL = PatternFill(start_color="E2EFDA", end_color="E2EFDA", fill_type="solid") # 浅绿色匹配/采纳
 WARN_FILL = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid") # 浅黄色年化/轮次
 DG_FILL = PatternFill(start_color="DDEBF7", end_color="DDEBF7", fill_type="solid") # 浅蓝色东莞分校
+EMBA_FILL = PatternFill(start_color="FCE4D6", end_color="FCE4D6", fill_type="solid") # 浅橙色高管兼读制
 INACTIVE_FILL = PatternFill(start_color="EDEDED", end_color="EDEDED", fill_type="solid") # 灰色归档失效
 
 REGULAR_FONT = Font(name=FONT_FAMILY, size=9)
@@ -57,26 +61,33 @@ THIN_BORDER = Border(
     bottom=Side(style='thin', color='D9D9D9')
 )
 
-def parse_faculty_dept(url):
+def parse_faculty_dept(url, prog_name):
     m = re.search(r'program-list/2027/([^/]+)/([^/]+)/([^/]+)', str(url))
     if m:
         faculty = m.group(1).replace('-', ' ').title()
         dept = m.group(2).replace('-', ' ').title()
         pcode = m.group(3).upper()
         return faculty, dept, pcode
-    if 'cityu-dg' in str(url):
+    if 'cityu-dg' in str(url) or '东莞' in str(prog_name):
         return "CityU Dongguan (东莞校区)", "Dongguan Academic Units", "DG"
     return "CityU Main Campus", "General Postgraduate", "MAIN"
 
 # ==========================================
 # 步骤二：官网在招全量目录生成 (official_list.xlsx & .csv)
+# 严格遵循红线 1 与红线 2：剔除 EMBA 高管班与东莞校区，纯净呈现 63 门全日制授课型硕士
 # ==========================================
-print("[*] 正在构建【步骤二：官网在招专业目录】...")
+print("[*] 正在构建【步骤二：官网在招专业目录 (纯净全日制 TPg 基准池)】...")
 official_rows = []
-main_valid = df_db[(df_db['is_valid'] == True) & (~df_db['program_website'].str.contains('cityu-dg', na=False))].copy()
 
-for idx, r in main_valid.iterrows():
-    fac, dept, pcode = parse_faculty_dept(r['program_website'])
+# 过滤条件：is_valid == True, 排除东莞校区，排除 EMBA (ID 4040, 4041)
+main_tpg_valid = df_db[
+    (df_db['is_valid'] == True) & 
+    (~df_db['program_website'].str.contains('cityu-dg', na=False)) &
+    (~df_db['id'].isin([4040, 4041]))
+].copy()
+
+for idx, r in main_tpg_valid.iterrows():
+    fac, dept, pcode = parse_faculty_dept(r['program_website'], r['program_name_en'])
     official_rows.append({
         "序号": len(official_rows) + 1,
         "学院 / 部门 (Faculty)": fac,
@@ -119,10 +130,11 @@ for col in ws_step2.columns:
 
 ws_step2.auto_filter.ref = f"A1:D{ws_step2.max_row}"
 wb_step2.save(os.path.join(STEPS_DIR, "步骤2_官网列表_official_list.xlsx"))
-print(f"[OK] 步骤二已保存: 步骤2_官网列表_official_list.xlsx (共 {len(official_rows)} 项主校区全日制在招专业)")
+print(f"[OK] 步骤二已保存: 步骤2_官网列表_official_list.xlsx (共 {len(official_rows)} 项全日制在招基准专业，严格排除EMBA与分校)")
 
 # ==========================================
 # 步骤三：差集比对大盘结果生成 (diff_programs.xlsx & .csv)
+# 严格分类：63 项完全匹配、2 项高管班免录、10 项东莞分校在招、3 项东莞分校失效
 # ==========================================
 print("[*] 正在构建【步骤三：大盘差集比对结果】...")
 diff_rows = []
@@ -130,15 +142,21 @@ diff_rows = []
 for idx, r in df_db.iterrows():
     is_valid = bool(r['is_valid'])
     is_dg = 'cityu-dg' in str(r['program_website']) or '东莞' in str(r['program_name_cn'])
-    fac, dept, pcode = parse_faculty_dept(r['program_website'])
+    is_emba = r['id'] in [4040, 4041]
+    fac, dept, pcode = parse_faculty_dept(r['program_website'], r['program_name_en'])
     
     if is_dg:
         if is_valid:
             status = "数据库独有(东莞分校/独立招生)"
             match_score = 0.85
         else:
-            status = "数据库独有(已失效/历史归档)"
+            status = "数据库独有(东莞分校/已失效归档)"
             match_score = 0.50
+        off_name = r['program_name_en']
+        off_url = r['program_website']
+    elif is_emba:
+        status = "数据库独有(在职高管研修班/兼读制)"
+        match_score = 0.70
         off_name = r['program_name_en']
         off_url = r['program_website']
     else:
@@ -193,9 +211,11 @@ for r in diff_rows:
         else: c.alignment = ALIGN_LEFT
         
         # 着色
-        if "东莞分校" in r["比对结果分类"]:
+        if "东莞分校/独立招生" in r["比对结果分类"]:
             c.fill = DG_FILL
-        elif "已失效" in r["比对结果分类"]:
+        elif "在职高管研修班" in r["比对结果分类"]:
+            c.fill = EMBA_FILL
+        elif "已失效归档" in r["比对结果分类"]:
             c.fill = INACTIVE_FILL
         elif "完全匹配" in r["比对结果分类"]:
             c.fill = PASS_FILL
@@ -230,11 +250,15 @@ for c_idx in range(1, len(step4_headers) + 1):
 
 for idx, r in df_db.iterrows():
     is_dg = 'cityu-dg' in str(r['program_website']) or '东莞' in str(r['program_name_cn'])
-    fac, dept, pcode = parse_faculty_dept(r['program_website'])
+    is_emba = r['id'] in [4040, 4041]
+    fac, dept, pcode = parse_faculty_dept(r['program_website'], r['program_name_en'])
     
     if is_dg:
-        campus_tag = "东莞校区 | 独立招生"
-        status = "已核验 (东莞校区在线直连)"
+        campus_tag = "东莞校区 | 独立招生" if r['is_valid'] else "东莞校区 | 历史归档"
+        status = "已核验 (东莞校区在线直连)" if r['is_valid'] else "已核验 (历史归档条目)"
+    elif is_emba:
+        campus_tag = "九龙塘本部 | 商学院高管项目"
+        status = "已核验 (高管班授课模式)"
     else:
         campus_tag = f"九龙塘本部 | {fac}"
         status = "已核验 (在线直连)"
@@ -249,6 +273,7 @@ for idx, r in df_db.iterrows():
         if c_idx in [1, 2, 7]: c.alignment = ALIGN_CENTER
         else: c.alignment = ALIGN_LEFT
         if is_dg: c.fill = DG_FILL
+        elif is_emba: c.fill = EMBA_FILL
 
 for col in ws_step4.columns:
     col_letter = get_column_letter(col[0].column)
@@ -291,7 +316,15 @@ df_valid = df_db[df_db['is_valid'].astype(str).str.lower() == 'true'].reset_inde
 for idx, r in df_valid.iterrows():
     p_url = str(r['program_website'])
     is_dg = 'cityu-dg' in p_url or '东莞' in str(r['program_name_cn'])
-    campus_str = "东莞校区 (CityU-DG)" if is_dg else "九龙塘本部"
+    is_emba = r['id'] in [4040, 4041]
+    
+    if is_dg:
+        campus_str = "东莞校区 (CityU-DG)"
+    elif is_emba:
+        campus_str = "九龙塘本部 (高管项目)"
+    else:
+        campus_str = "九龙塘本部"
+        
     school_str = f"{r['school_name_cn']} {r['school_name_en']}"
     prog_str = f"{r['program_name_en']} ({r['program_name_cn']})"
     duration = str(r.get('program_duration', '') or '')
@@ -309,6 +342,7 @@ for idx, r in df_valid.iterrows():
         if c_idx in [1, 2, 3, 6]: c.alignment = ALIGN_CENTER
         else: c.alignment = ALIGN_LEFT
         if is_dg: c.fill = DG_FILL
+        elif is_emba: c.fill = EMBA_FILL
 
 for col in ws1.columns:
     col_letter = get_column_letter(col[0].column)
